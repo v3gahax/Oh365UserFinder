@@ -36,6 +36,9 @@ This will run the install script to add necessary dependencies to your system.
 -ps, --pwspray - Password sprays a list of accounts\n
 -p, --password - Password to be tested\n
 -el, --elist - Emails to be tested
+
+NEW! 
+--proxy - forwards all requests through a proxy you designate!\n
 ```
 
 ### Examples Commands
